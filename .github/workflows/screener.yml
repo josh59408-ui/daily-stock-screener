@@ -35,6 +35,13 @@ jobs:
       - name: 安裝套件
         run: pip install -r requirements.txt
 
+      - name: 還原母體清單快取（TWSE 網站故障時的備援）
+        uses: actions/cache@v4
+        with:
+          path: universe_cache.csv
+          key: universe-${{ github.run_id }}     # 每次執行成功後存一份新的
+          restore-keys: universe-                # 還原最近一次的快取
+
       - name: 決定執行模式
         id: mode
         run: |
@@ -90,3 +97,14 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           keep_files: true   # 盤中版執行時保留前一日的收盤版，反之亦然
+
+      - name: 執行失敗時發 LINE 通知
+        if: failure()
+        run: |
+          if [ -z "$LINE_TOKEN" ] || [ -z "$LINE_USER_ID" ]; then
+            echo "未設定 LINE 金鑰，略過失敗通知"; exit 0
+          fi
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Authorization: Bearer ${LINE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 每日選股執行失敗，今日清單可能未產出。詳情：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"

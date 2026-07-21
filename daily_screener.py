@@ -62,17 +62,30 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ========================= 1. 取得上市櫃股票清單 =========================
 
+UNIVERSE_CACHE = os.path.join(BASE, "universe_cache.csv")
+
 def fetch_universe():
-    """從 TWSE ISIN 網頁抓上市(.TW)與上櫃(.TWO)普通股清單"""
+    """從 TWSE ISIN 網頁抓上市(.TW)與上櫃(.TWO)普通股清單（失敗會 raise）"""
     urls = {
         ".TW": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",   # 上市
         ".TWO": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4",  # 上櫃
     }
     tickers, names, inds = [], {}, {}
     for suffix, url in urls.items():
-        r = requests.get(url, timeout=30)
-        r.encoding = "big5"
-        tables = pd.read_html(io.StringIO(r.text))
+        text = None
+        for attempt in range(3):
+            try:
+                r = requests.get(url, timeout=30)
+                r.raise_for_status()
+                r.encoding = "big5"
+                text = r.text
+                break
+            except Exception as e:
+                print(f"抓取母體清單失敗（{suffix} 第 {attempt + 1}/3 次）: {e}")
+                time.sleep(10)
+        if text is None:
+            raise RuntimeError(f"TWSE ISIN 網頁（{suffix}）連續 3 次抓取失敗")
+        tables = pd.read_html(io.StringIO(text))
         df = tables[0]
         df.columns = df.iloc[0]
         df = df.iloc[1:]
@@ -89,8 +102,31 @@ def fetch_universe():
                 names[t] = name
                 ind = row.get("產業別", "")
                 inds[t] = "" if pd.isna(ind) else str(ind).strip()
+    if len(tickers) < 1500:   # 正常約 1900+ 檔；明顯偏少代表網頁改版或回傳不完整
+        raise RuntimeError(f"母體僅解析出 {len(tickers)} 檔，疑似 TWSE 網頁異常")
     print(f"母體：共 {len(tickers)} 檔上市櫃普通股")
     return tickers, names, inds
+
+def get_universe():
+    """抓母體清單；成功就更新快取，失敗退回用上次的快取檔"""
+    try:
+        tickers, names, inds = fetch_universe()
+        pd.DataFrame({
+            "ticker": tickers,
+            "name": [names[t] for t in tickers],
+            "industry": [inds[t] for t in tickers],
+        }).to_csv(UNIVERSE_CACHE, index=False, encoding="utf-8-sig")
+        return tickers, names, inds
+    except Exception as e:
+        print(f"母體清單取得失敗：{e}")
+        if os.path.exists(UNIVERSE_CACHE):
+            df = pd.read_csv(UNIVERSE_CACHE, dtype=str).fillna("")
+            tickers = df["ticker"].tolist()
+            print(f"改用快取母體清單（{len(tickers)} 檔，母體最多一天舊，影響極小）")
+            return (tickers,
+                    dict(zip(df["ticker"], df["name"])),
+                    dict(zip(df["ticker"], df["industry"])))
+        raise   # 沒有快取可退 → 讓執行失敗，由排程端發失敗通知
 
 # ========================= 2. 下載歷史價量 =========================
 
@@ -572,7 +608,7 @@ def main():
     now = dt.datetime.now()
     today = now.date()
 
-    tickers, names, inds = fetch_universe()
+    tickers, names, inds = get_universe()
     frames = download_with_retry(tickers)
     if not frames:
         print("沒有取得任何資料，請檢查網路或資料源。")
