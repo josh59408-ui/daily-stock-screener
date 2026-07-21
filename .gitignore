@@ -3,3 +3,5 @@ __pycache__/
 *.html
 *.csv
 *.log
+history_cache.pkl
+history_cache_meta.json

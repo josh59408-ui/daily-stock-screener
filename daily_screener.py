@@ -9,6 +9,7 @@
   python daily_screener.py --final     收盤正式版（排程 13:55，LINE 約 14:00 送達）
   加 --force   資料非今日也照跑（手動補跑用）
   加 --no-push 只產檔不推播（測試用）
+  加 --rebuild 忽略歷史快取，全量重抓（除錯用；平常每 7 天會自動全量重建）
 
 產出： daily_list.html / daily_list_preview.html 與對應 CSV（皆在腳本所在資料夾）
 """
@@ -130,16 +131,27 @@ def get_universe():
 
 # ========================= 2. 下載歷史價量 =========================
 
-def download_history(tickers, chunk=100):
-    """分批向 yfinance 下載 2 年日 K（還原權值價）"""
+HISTORY_CACHE = os.path.join(BASE, "history_cache.pkl")
+HISTORY_META = os.path.join(BASE, "history_cache_meta.json")
+
+MAX_BARS = 300            # 快取每檔保留的 K 棒數（指標最深需 260 根，留餘裕）
+FULL_LOOKBACK_DAYS = 550  # 全量下載回看的日曆天數（約 370 個交易日 > MAX_BARS）
+REBUILD_EVERY_DAYS = 7    # 快取滿 N 天強制全量重建（防還原價/資料修正累積誤差）
+ADJ_TOLERANCE = 0.002     # 重疊日收盤價相對差超過 0.2% → 視為除權息還原，整檔重抓
+
+def full_start_date():
+    return (dt.date.today() - dt.timedelta(days=FULL_LOOKBACK_DAYS)).isoformat()
+
+def download_history(tickers, chunk=100, **yf_range):
+    """分批向 yfinance 下載日 K（還原權值價）；範圍由 yf_range 指定（start= 或 period=）"""
     frames = {}
     for i in range(0, len(tickers), chunk):
         batch = tickers[i:i + chunk]
         print(f"下載中 {i + 1}-{min(i + chunk, len(tickers))} / {len(tickers)} ...")
         data = yf.download(
-            batch, period="2y", interval="1d",
+            batch, interval="1d",
             auto_adjust=True, group_by="ticker",
-            progress=False, threads=True,
+            progress=False, threads=True, **yf_range,
         )
         for t in batch:
             try:
@@ -151,14 +163,95 @@ def download_history(tickers, chunk=100):
         time.sleep(1)  # 對資料源客氣一點
     return frames
 
-def download_with_retry(tickers):
-    frames = download_history(tickers)
+def download_with_retry(tickers, **yf_range):
+    frames = download_history(tickers, **yf_range)
     missing = [t for t in tickers if t not in frames]
     if missing:
         print(f"第一輪缺 {len(missing)} 檔，重試一次 ...")
-        frames.update(download_history(missing))
+        frames.update(download_history(missing, **yf_range))
         missing = [t for t in tickers if t not in frames]
     print(f"成功取得 {len(frames)} 檔資料（缺 {len(missing)} 檔）")
+    return frames
+
+def load_cache():
+    """讀歷史快取；回傳 (frames, 全量建立日)。不存在、損毀或到期 → None（觸發全量）"""
+    if not (os.path.exists(HISTORY_CACHE) and os.path.exists(HISTORY_META)):
+        return None
+    try:
+        with open(HISTORY_META, encoding="utf-8") as f:
+            built = dt.date.fromisoformat(json.load(f)["built"])
+        age = (dt.date.today() - built).days
+        if age >= REBUILD_EVERY_DAYS:
+            print(f"歷史快取距上次全量重建已 {age} 天，本次全量重抓")
+            return None
+        frames = pd.read_pickle(HISTORY_CACHE)
+        if not isinstance(frames, dict) or not frames:
+            return None
+        print(f"讀入歷史快取 {len(frames)} 檔（{built} 全量建立）")
+        return frames, built
+    except Exception as e:
+        print(f"歷史快取讀取失敗（{type(e).__name__}: {e}），改全量重抓")
+        return None
+
+def save_cache(frames, built=None):
+    trimmed = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
+    pd.to_pickle(trimmed, HISTORY_CACHE)
+    with open(HISTORY_META, "w", encoding="utf-8") as f:
+        json.dump({"built": (built or dt.date.today()).isoformat()}, f)
+
+def merge_history(old, new):
+    """把增量資料接上快取。回傳 (合併結果, 需整檔重抓)"""
+    overlap = old.index.intersection(new.index)
+    if len(overlap) == 0:
+        return None, True   # 快取太舊接不上 → 整檔重抓
+    # 還原價偵測：比對「已收盤」的重疊日（排除快取最後一根，可能是先前盤中暫存值）。
+    # 除權息時 Yahoo 會回頭調整整段歷史，只接新 K 棒會讓均線/RS 全錯，必須整檔重抓。
+    settled = overlap[overlap < old.index[-1]]
+    if len(settled):
+        a = old.loc[settled, "Close"].to_numpy(dtype=float)
+        b = new.loc[settled, "Close"].to_numpy(dtype=float)
+        if np.nanmax(np.abs(a - b) / np.abs(a)) > ADJ_TOLERANCE:
+            return None, True
+    # 重疊區間以新資料為準（盤中暫存 K 棒在收盤後被正式值覆蓋）
+    merged = pd.concat([old[old.index < new.index[0]], new])
+    return merged.iloc[-MAX_BARS:], False
+
+def get_history(tickers, rebuild=False):
+    """取得全市場歷史價量：有快取就只補近一個月，否則全量下載"""
+    cached = None if rebuild else load_cache()
+    if cached is None:
+        print(f"全量下載 {len(tickers)} 檔（回看 {FULL_LOOKBACK_DAYS} 天）...")
+        frames = download_with_retry(tickers, start=full_start_date())
+        frames = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
+        if frames:
+            save_cache(frames)
+        return frames
+
+    cached_frames, built = cached
+    known = [t for t in tickers if t in cached_frames]
+    to_full = [t for t in tickers if t not in cached_frames]  # 新上市或上次缺漏
+    print(f"增量更新 {len(known)} 檔（近一個月）；{len(to_full)} 檔不在快取，需全量")
+    inc = download_with_retry(known, period="1mo")
+
+    frames = {}
+    adj_refetch = 0
+    for t in known:
+        if t not in inc:
+            frames[t] = cached_frames[t]  # 增量抓不到 → 沿用舊資料，主流程會依日期剔除
+            continue
+        merged, needs_full = merge_history(cached_frames[t], inc[t])
+        if needs_full:
+            to_full.append(t)
+            adj_refetch += 1
+        else:
+            frames[t] = merged
+    if adj_refetch:
+        print(f"{adj_refetch} 檔偵測到除權息還原或斷檔，整檔重抓")
+    if to_full:
+        frames.update(download_with_retry(to_full, start=full_start_date()))
+
+    frames = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
+    save_cache(frames, built=built)  # 保留原全量建立日，讓 7 天重建週期正常運作
     return frames
 
 # ========================= 3. 逐檔計算條件 =========================
@@ -602,6 +695,7 @@ def main():
     grp.add_argument("--final", action="store_true", help="收盤正式版（預設）")
     ap.add_argument("--force", action="store_true", help="資料非今日也照跑")
     ap.add_argument("--no-push", action="store_true", help="只產檔不推播")
+    ap.add_argument("--rebuild", action="store_true", help="忽略歷史快取，全量重抓")
     args = ap.parse_args()
     preview = args.preview
 
@@ -609,7 +703,7 @@ def main():
     today = now.date()
 
     tickers, names, inds = get_universe()
-    frames = download_with_retry(tickers)
+    frames = get_history(tickers, rebuild=args.rebuild)
     if not frames:
         print("沒有取得任何資料，請檢查網路或資料源。")
         sys.exit(1)

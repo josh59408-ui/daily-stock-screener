@@ -12,6 +12,10 @@ on:
         type: choice
         options: [final, preview]
         default: final
+      rebuild:
+        description: "全量重建歷史快取（除錯用）"
+        type: boolean
+        default: false
 
 jobs:
   screener:
@@ -42,11 +46,22 @@ jobs:
           key: universe-${{ github.run_id }}     # 每次執行成功後存一份新的
           restore-keys: universe-                # 還原最近一次的快取
 
+      - name: 還原歷史價量快取（每日只增量補近一個月；腳本每 7 天自動全量重建）
+        uses: actions/cache@v4
+        with:
+          path: |
+            history_cache.pkl
+            history_cache_meta.json
+          key: history-${{ github.run_id }}
+          restore-keys: history-
+
       - name: 決定執行模式
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "flag=--${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+            flag="--${{ inputs.mode }}"
+            if [ "${{ inputs.rebuild }}" = "true" ]; then flag="$flag --rebuild"; fi
+            echo "flag=$flag" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "55 4 * * 1-5" ]; then
             echo "flag=--preview" >> "$GITHUB_OUTPUT"
           else
