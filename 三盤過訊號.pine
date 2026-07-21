@@ -1,31 +1,19 @@
 //@version=6
 // 三盤過 + 紅K + 量增 — 貼到 TradingView Pine 編輯器使用
-// 三個條件的定義都做成參數，可在指標設定裡調整
+// 條件寫死，與平常看盤用的「全方位交易濾網」定義完全相同，無任何參數
 indicator("三盤過+紅K+量增", overlay=true)
 
-// ── 參數 ──────────────────────────────────────────────
-nBars    = input.int(3, "三盤過：回看盤數", minval=1, tooltip="收盤價需突破前 N 根K棒的最高點")
-volMode  = input.string("大於前一日", "量增定義", options=["大於前一日", "大於20日均量", "兩者皆須"])
-volMult  = input.float(1.0, "量增倍數門檻", minval=0.5, step=0.1, tooltip="例如 1.5 = 量需達基準的 1.5 倍")
-
 // ── 條件 ──────────────────────────────────────────────
-prevHigh  = ta.highest(high[1], nBars)          // 前 N 盤最高點（不含今日）
-passHigh  = close > prevHigh                     // 三盤過
-redK      = close > open                         // 紅K
-volAvg20  = ta.sma(volume, 20)[1]                // 前一日為止的20日均量
-volUpPrev = volume > volume[1] * volMult
-volUpAvg  = volume > volAvg20 * volMult
-volUp = switch volMode
-    "大於前一日" => volUpPrev
-    "大於20日均量" => volUpAvg
-    => volUpPrev and volUpAvg
+highest2     = math.max(high[1], high[2])   // 前兩根K線最高點
+is_red       = close > open                 // 紅K
+vol_increase = volume > volume[1]           // 量增：今日量 > 昨日量
 
-signal = passHigh and redK and volUp
+signal = close > highest2 and is_red and vol_increase
 
 // ── 顯示 ──────────────────────────────────────────────
 plotshape(signal, title="三盤過訊號", style=shape.triangleup,
           location=location.belowbar, color=color.orange, size=size.small, text="過")
-plot(prevHigh, "前N盤高點", color=color.new(color.gray, 60), style=plot.style_stepline)
+plot(highest2, "前2盤高點", color=color.new(color.gray, 60), style=plot.style_stepline)
 
 // 給 Pine Screener 當篩選欄位用（圖上不顯示）
 plot(signal ? 1 : 0, "訊號", display=display.none)

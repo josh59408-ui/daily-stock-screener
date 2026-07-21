@@ -17,6 +17,8 @@ jobs:
   screener:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write   # 允許把清單網頁推到 gh-pages 分支
     env:
       TZ: Asia/Taipei
       LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
@@ -57,3 +59,34 @@ jobs:
             screener_result_*.csv
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: 準備手機瀏覽網頁
+        run: |
+          mkdir -p public
+          cp daily_list*.html public/ 2>/dev/null || true
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html lang="zh-Hant">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>每日股票清單</title>
+          <style>
+            body{font-family:system-ui,-apple-system,"Microsoft JhengHei",sans-serif;max-width:480px;margin:40px auto;padding:0 16px}
+            a{display:block;padding:16px;margin:12px 0;border:1px solid #ccc;border-radius:10px;text-decoration:none;font-size:1.1rem;color:#0366d6}
+          </style>
+          </head>
+          <body>
+          <h1>每日股票清單</h1>
+          <a href="daily_list.html">收盤正式版（每交易日約 14:00 更新）</a>
+          <a href="daily_list_preview.html">盤中預估版（每交易日約 13:00 更新）</a>
+          </body>
+          </html>
+          EOF
+
+      - name: 發布到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          keep_files: true   # 盤中版執行時保留前一日的收盤版，反之亦然
