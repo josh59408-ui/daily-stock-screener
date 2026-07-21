@@ -1,0 +1,59 @@
+name: 每日股票清單
+
+on:
+  schedule:
+    # GitHub cron 用 UTC 時間；台灣 = UTC+8
+    - cron: "55 4 * * 1-5"   # 台灣 12:55 盤中預估版（實際啟動可能延遲 5-15 分鐘）
+    - cron: "55 5 * * 1-5"   # 台灣 13:55 收盤正式版
+  workflow_dispatch:          # 允許在 GitHub 網頁上手動觸發（測試用）
+    inputs:
+      mode:
+        description: "執行模式"
+        type: choice
+        options: [final, preview]
+        default: final
+
+jobs:
+  screener:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TZ: Asia/Taipei
+      LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
+      LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 決定執行模式
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "flag=--${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "55 4 * * 1-5" ]; then
+            echo "flag=--preview" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=--final" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 執行選股
+        run: python daily_screener.py ${{ steps.mode.outputs.flag }}
+
+      - name: 保存產出檔（網頁與 CSV，保留 7 天）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-output-${{ github.run_id }}
+          path: |
+            daily_list*.html
+            screener_result_*.csv
+          if-no-files-found: ignore
+          retention-days: 7
