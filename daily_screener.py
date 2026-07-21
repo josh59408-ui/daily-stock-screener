@@ -33,8 +33,8 @@ except AttributeError:
 
 # ========================= 設定區（可調整的都在這） =========================
 
-LINE_TOKEN = os.environ.get("LINE_TOKEN", "")      # Channel access token
-LINE_USER_ID = os.environ.get("LINE_USER_ID", "")  # U 開頭的 user ID
+LINE_TOKEN = os.environ.get("LINE_TOKEN", "").strip()      # Channel access token
+LINE_USER_ID = os.environ.get("LINE_USER_ID", "").strip()  # U 開頭的 user ID
 
 LOOKBACK = 250          # 52 週高低點的回看天數（交易日）
 MA_SHORT = 55           # 照你的腳本用 55MA（書上是 50）
@@ -426,14 +426,22 @@ def push_line(text):
     if not LINE_TOKEN or not LINE_USER_ID:
         print("（未設定 LINE_TOKEN / LINE_USER_ID，略過推播）")
         return
-    resp = requests.post(
-        "https://api.line.me/v2/bot/message/push",
-        headers={"Authorization": f"Bearer {LINE_TOKEN}"},
-        json={"to": LINE_USER_ID,
-              "messages": [{"type": "text", "text": text[:4900]}]},
-        timeout=15,
-    )
+    try:
+        resp = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {LINE_TOKEN}"},
+            json={"to": LINE_USER_ID,
+                  "messages": [{"type": "text", "text": text[:4900]}]},
+            timeout=15,
+        )
+    except Exception as e:
+        print(f"LINE 推播失敗（連線/金鑰格式問題）: {type(e).__name__}: {e}")
+        sys.exit(1)
     print("LINE 推播:", resp.status_code, resp.text[:200])
+    if resp.status_code != 200:
+        print("LINE 推播被拒絕：請檢查 LINE_TOKEN / LINE_USER_ID 是否正確"
+              "（401=Token 錯誤，400=User ID 錯誤或格式問題）")
+        sys.exit(1)
 
 # ========================= 主流程 =========================
 
