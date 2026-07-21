@@ -1,8 +1,6 @@
 name: 每日股票清單
 
 on:
-  push:            # 暫時：讓這次 push 立刻跑一次以建立雲端快取，建好後移除
-    branches: [main]
   schedule:
     # GitHub cron 用 UTC 時間；台灣 = UTC+8
     - cron: "55 4 * * 1-5"   # 台灣 12:55 盤中預估版（實際啟動可能延遲 5-15 分鐘）
