@@ -222,6 +222,7 @@ def short_industry(ind):
 PAGE_JS = """<script>
 var TODAY = __TODAY__;      // 今日合格池 [{c:代號, n:名稱}, ...]
 var IS_FINAL = __IS_FINAL__;
+var SYNC_FILE = 'daily_screener_sync.json';   // Gist 內的檔名（各裝置以此互認）
 
 function lsGet(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -229,15 +230,87 @@ function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch
 var bl = new Set(lsGet('ds_blacklist', []));   // 永久汰除名單
 var watch = lsGet('ds_watch', {});             // 曾進清單、預期還在 TV 清單上的股票
 var namesMap = lsGet('ds_names', {});
-TODAY.forEach(function (x) { namesMap[x.c] = x.n; });
+var syncToken = lsGet('ds_sync_token', '');    // GitHub token（只存本裝置，不在網頁原始碼）
+var gistId = lsGet('ds_gist_id', '');
+var pushTimer = null;
 
 // 正式版才更新「曾出現」名單（預估版盤中浮動，不記錄）
-if (IS_FINAL) { TODAY.forEach(function (x) { if (!bl.has(x.c)) watch[x.c] = x.n; }); }
+function applyToday() {
+  TODAY.forEach(function (x) { namesMap[x.c] = x.n; });
+  if (IS_FINAL) { TODAY.forEach(function (x) { if (!bl.has(x.c)) watch[x.c] = x.n; }); }
+}
 
-function persist() {
+function saveLocal() {
   lsSet('ds_blacklist', Array.from(bl));
   lsSet('ds_watch', watch);
   lsSet('ds_names', namesMap);
+}
+function persist() { saveLocal(); schedulePush(); }
+
+// ---------- 跨裝置同步（GitHub Gist）----------
+function setSync(msg) {
+  var el = document.getElementById('sync-status');
+  if (el) el.textContent = msg;
+}
+function updateSyncState() {
+  var el = document.getElementById('sync-state');
+  if (el) el.textContent = syncToken ? '已啟用' : '未啟用';
+}
+function gh(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({
+    'Authorization': 'Bearer ' + syncToken,
+    'Accept': 'application/vnd.github+json'
+  }, opts.headers || {});
+  return fetch('https://api.github.com' + path, opts).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+function findGist() {
+  if (gistId) return Promise.resolve(gistId);
+  return gh('/gists?per_page=100').then(function (list) {
+    var g = list.find(function (x) { return x.files && x.files[SYNC_FILE]; });
+    if (g) { gistId = g.id; lsSet('ds_gist_id', gistId); }
+    return gistId || null;
+  });
+}
+function pullState() {
+  setSync('同步中…');
+  return findGist().then(function (id) {
+    if (!id) return null;   // 第一台裝置：雲端還沒有資料
+    return gh('/gists/' + id).then(function (g) {
+      var f = g.files[SYNC_FILE];
+      if (!f) return null;
+      var st = JSON.parse(f.content);
+      bl = new Set(st.bl || []);
+      watch = st.watch || {};
+      var rn = st.names || {};
+      Object.keys(rn).forEach(function (k) { if (!namesMap[k]) namesMap[k] = rn[k]; });
+      return st;
+    });
+  }).then(function (st) {
+    setSync('已同步 ' + new Date().toLocaleTimeString());
+    return st;
+  });
+}
+function pushNow() {
+  if (!syncToken) return;
+  var files = {};
+  files[SYNC_FILE] = { content: JSON.stringify(
+    { bl: Array.from(bl), watch: watch, names: namesMap, ts: Date.now() }) };
+  var p = gistId
+    ? gh('/gists/' + gistId, { method: 'PATCH', body: JSON.stringify({ files: files }) })
+    : gh('/gists', { method: 'POST', body: JSON.stringify(
+        { description: '每日股票清單 跨裝置同步', public: false, files: files }) })
+        .then(function (g) { gistId = g.id; lsSet('ds_gist_id', gistId); });
+  p.then(function () { setSync('已同步 ' + new Date().toLocaleTimeString()); })
+   .catch(function (e) { setSync('同步失敗：' + e.message + '（名單仍存於本機）'); });
+}
+function schedulePush() {
+  if (!syncToken) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushNow, 1200);   // 連續操作合併成一次上傳
 }
 function render() {
   document.querySelectorAll('tr[data-code]').forEach(function (tr) {
@@ -310,7 +383,29 @@ document.querySelectorAll('th[data-k]').forEach(function (th) {
       .forEach(function (r) { tbody.appendChild(r); });
   });
 });
-persist(); render();
+
+// 同步設定 UI
+document.getElementById('sync-on').addEventListener('click', function () {
+  var t = document.getElementById('sync-token').value.replace(/\\s+/g, '');
+  if (!t) { setSync('請先貼上 token'); return; }
+  syncToken = t; lsSet('ds_sync_token', t);
+  document.getElementById('sync-token').value = '';
+  updateSyncState();
+  pullState().then(function () { applyToday(); saveLocal(); render(); schedulePush(); })
+    .catch(function (e) { setSync('啟用失敗：' + e.message + '，請確認 token 正確且有 gist 權限'); });
+});
+document.getElementById('sync-off').addEventListener('click', function () {
+  syncToken = ''; gistId = '';
+  lsSet('ds_sync_token', ''); lsSet('ds_gist_id', '');
+  updateSyncState(); setSync('已停用，名單僅存於本機');
+});
+
+// 啟動：先用本機資料立即顯示，有 token 再拉雲端覆蓋後重繪並回寫
+applyToday(); saveLocal(); render(); updateSyncState();
+if (syncToken) {
+  pullState().then(function () { applyToday(); saveLocal(); render(); schedulePush(); })
+    .catch(function (e) { setSync('同步失敗：' + e.message + '（名單仍存於本機）'); });
+}
 </script>"""
 
 THEAD = ("<thead><tr><th data-k='1'>股票</th><th data-k='1'>收盤</th>"
@@ -383,6 +478,15 @@ def build_html(list_a, names, inds, date_label, final=True):
   .drop-item, .bl-item {{ display:inline-block; margin:2px 14px 2px 0; white-space:nowrap; }}
   details.bl {{ margin-top:28px; color:var(--dim); font-size:.85rem; line-height:2.1; }}
   details.bl summary {{ cursor:pointer; }}
+  details.sync {{ margin-top:14px; }}
+  details.sync p {{ line-height:1.9; margin:10px 0; }}
+  details.sync input {{ background:var(--bg); border:1px solid var(--line); color:var(--txt);
+        padding:6px 10px; border-radius:4px; width:min(320px,60vw); font:inherit; font-size:.8rem; }}
+  details.sync button {{ background:none; border:1px solid var(--line); color:var(--dim);
+        font:inherit; font-size:.75rem; padding:4px 12px; margin-left:8px;
+        border-radius:4px; cursor:pointer; }}
+  details.sync button:hover {{ color:var(--acc); border-color:var(--acc); }}
+  #sync-status {{ display:inline-block; margin-left:10px; font-size:.78rem; }}
   table {{ width:100%; border-collapse:collapse; background:var(--panel);
            border:1px solid var(--line); font-size:.9rem; }}
   th {{ text-align:right; color:var(--dim); font-weight:500; padding:10px 12px;
@@ -411,6 +515,14 @@ def build_html(list_a, names, inds, date_label, final=True):
 <table id='tb-a'>{THEAD}<tbody>{a_rows}</tbody></table>
 <details class="bl"><summary>已汰除股票（<span id="bl-count">0</span> 檔）──點開管理／復原</summary>
 <div id="bl-list"></div></details>
+<details class="bl sync"><summary>☁ 跨裝置同步（<span id="sync-state">未啟用</span>）</summary>
+<p>啟用後，汰除名單與消失警示會存到你 GitHub 帳號的私密 Gist，
+電腦與手機看到同一份。每台裝置各貼一次 token 即可（token 只存在該裝置的瀏覽器裡）。</p>
+<p>建立 token：GitHub → Settings → Developer settings → Personal access tokens →
+Tokens (classic) → Generate new token，權限只勾 <b>gist</b>。</p>
+<input id="sync-token" type="password" placeholder="貼上 GitHub token"
+       autocomplete="off"><button id="sync-on">啟用</button><button
+       id="sync-off">停用</button><span id="sync-status"></span></details>
 <footer>條件：收盤 > 55MA > 150MA > 200MA・200MA 較一個月前上升・
 高於52週低點130%・高於52週高點75%・RS ≥ {RS_THRESHOLD}・
 排除產業：{"、".join(EXCLUDE_INDUSTRIES)}。<br>
@@ -418,7 +530,8 @@ def build_html(list_a, names, inds, date_label, final=True):
 盤中預估版的訊號以收盤為準。進場時機自行看圖判斷。點股名開啟 TradingView。<br>
 📋 複製代號後，到 TradingView 商品清單面板按 Ctrl+V 即可整批加入清單。<br>
 點欄位標題可排序・55MA乖離 ≥ {BIAS_WARN}% 以橘字提示過熱。<br>
-✕ 汰除的股票之後不再顯示；汰除與消失警示記錄存於瀏覽器，請固定用同一瀏覽器開啟。</footer>
+✕ 汰除的股票之後不再顯示；汰除與消失警示預設存於瀏覽器本機，
+啟用上方「跨裝置同步」後電腦與手機共用同一份名單。</footer>
 </main>{page_js}</body></html>"""
 
 # ========================= 5. LINE 推播 =========================
