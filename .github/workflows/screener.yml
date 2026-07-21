@@ -86,7 +86,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # if: always() → 就算 LINE 推播失敗讓腳本以失敗收場，已產出的清單仍照常發布
       - name: 準備手機瀏覽網頁
+        if: always()
         run: |
           mkdir -p public
           cp daily_list*.html public/ 2>/dev/null || true
@@ -111,6 +113,7 @@ jobs:
           EOF
 
       - name: 發布到 GitHub Pages
+        if: always()
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -123,7 +126,12 @@ jobs:
           if [ -z "$LINE_TOKEN" ] || [ -z "$LINE_USER_ID" ]; then
             echo "未設定 LINE 金鑰，略過失敗通知"; exit 0
           fi
-          curl -s -X POST https://api.line.me/v2/bot/message/push \
+          status=$(curl -s -o /tmp/line_resp.txt -w "%{http_code}" \
+            -X POST https://api.line.me/v2/bot/message/push \
             -H "Authorization: Bearer ${LINE_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 選股排程執行失敗（${{ steps.mode.outputs.flag }}）。詳情：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 選股排程執行失敗（${{ steps.mode.outputs.flag }}）。詳情：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}")
+          echo "LINE 失敗通知回應 HTTP $status: $(cat /tmp/line_resp.txt)"
+          if [ "$status" != "200" ]; then
+            echo "::warning::LINE 失敗通知未送達（HTTP $status），請檢查 LINE_TOKEN / LINE_USER_ID"
+          fi

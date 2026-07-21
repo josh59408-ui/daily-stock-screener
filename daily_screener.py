@@ -196,8 +196,16 @@ def load_cache():
         print(f"歷史快取讀取失敗（{type(e).__name__}: {e}），改全量重抓")
         return None
 
-def save_cache(frames, built=None):
-    trimmed = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
+def save_cache(frames, built=None, drop_date=None):
+    """drop_date：存檔前剔除該日期的最後一根 K 棒。
+    預估版（盤中）執行時傳入今日，確保快取只含已收盤資料——否則正式版增量
+    若剛好缺某檔，會沿用快取裡 12:55 的盤中暫存值且日期驗證攔不住。"""
+    trimmed = {}
+    for t, df in frames.items():
+        if drop_date is not None and len(df) and df.index[-1].date() == drop_date:
+            df = df.iloc[:-1]
+        if len(df):
+            trimmed[t] = df.iloc[-MAX_BARS:]
     pd.to_pickle(trimmed, HISTORY_CACHE)
     with open(HISTORY_META, "w", encoding="utf-8") as f:
         json.dump({"built": (built or dt.date.today()).isoformat()}, f)
@@ -219,15 +227,16 @@ def merge_history(old, new):
     merged = pd.concat([old[old.index < new.index[0]], new])
     return merged.iloc[-MAX_BARS:], False
 
-def get_history(tickers, rebuild=False):
-    """取得全市場歷史價量：有快取就只補近一個月，否則全量下載"""
+def get_history(tickers, rebuild=False, unsettled_date=None):
+    """取得全市場歷史價量：有快取就只補近一個月，否則全量下載。
+    unsettled_date：該日 K 棒尚未收盤（預估版），不寫入快取。"""
     cached = None if rebuild else load_cache()
     if cached is None:
         print(f"全量下載 {len(tickers)} 檔（回看 {FULL_LOOKBACK_DAYS} 天）...")
         frames = download_with_retry(tickers, start=full_start_date())
         frames = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
         if frames:
-            save_cache(frames)
+            save_cache(frames, drop_date=unsettled_date)
         return frames
 
     cached_frames, built = cached
@@ -254,7 +263,8 @@ def get_history(tickers, rebuild=False):
         frames.update(download_with_retry(to_full, start=full_start_date()))
 
     frames = {t: df.iloc[-MAX_BARS:] for t, df in frames.items()}
-    save_cache(frames, built=built)  # 保留原全量建立日，讓 7 天重建週期正常運作
+    # 保留原全量建立日，讓 7 天重建週期正常運作
+    save_cache(frames, built=built, drop_date=unsettled_date)
     return frames
 
 # ========================= 3. 逐檔計算條件 =========================
@@ -706,7 +716,8 @@ def main():
     today = now.date()
 
     tickers, names, inds = get_universe()
-    frames = get_history(tickers, rebuild=args.rebuild)
+    frames = get_history(tickers, rebuild=args.rebuild,
+                         unsettled_date=today if preview else None)
     if not frames:
         print("沒有取得任何資料，請檢查網路或資料源。")
         sys.exit(1)
