@@ -33,8 +33,9 @@ except AttributeError:
 
 # ========================= 設定區（可調整的都在這） =========================
 
-LINE_TOKEN = os.environ.get("LINE_TOKEN", "").strip()      # Channel access token
-LINE_USER_ID = os.environ.get("LINE_USER_ID", "").strip()  # U 開頭的 user ID
+# 金鑰本身不含空白；清掉任何位置的空白/換行（從終端機複製時常混入）
+LINE_TOKEN = "".join(os.environ.get("LINE_TOKEN", "").split())      # Channel access token
+LINE_USER_ID = "".join(os.environ.get("LINE_USER_ID", "").split())  # U 開頭的 user ID
 
 LOOKBACK = 250          # 52 週高低點的回看天數（交易日）
 MA_SHORT = 55           # 照你的腳本用 55MA（書上是 50）
