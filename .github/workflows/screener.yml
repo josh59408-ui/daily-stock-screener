@@ -5,6 +5,7 @@ on:
     # GitHub cron 用 UTC 時間；台灣 = UTC+8
     - cron: "55 4 * * 1-5"   # 台灣 12:55 盤中預估版（實際啟動可能延遲 5-15 分鐘）
     - cron: "55 5 * * 1-5"   # 台灣 13:55 收盤正式版
+    - cron: "30 9 * * 0"     # 台灣週日 17:30 全量重建歷史快取，週一開盤即走最快路徑
   workflow_dispatch:          # 允許在 GitHub 網頁上手動觸發（測試用）
     inputs:
       mode:
@@ -46,7 +47,7 @@ jobs:
           key: universe-${{ github.run_id }}     # 每次執行成功後存一份新的
           restore-keys: universe-                # 還原最近一次的快取
 
-      - name: 還原歷史價量快取（每日只增量補近一個月；腳本每 7 天自動全量重建）
+      - name: 還原歷史價量快取（每日只增量補近一個月；每週日排程全量重建）
         uses: actions/cache@v4
         with:
           path: |
@@ -64,6 +65,9 @@ jobs:
             echo "flag=$flag" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "55 4 * * 1-5" ]; then
             echo "flag=--preview" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 9 * * 0" ]; then
+            # 週日重建：休市日無新資料，腳本建完快取後會自然結束，不發通知不產清單
+            echo "flag=--final --rebuild" >> "$GITHUB_OUTPUT"
           else
             echo "flag=--final" >> "$GITHUB_OUTPUT"
           fi
@@ -122,4 +126,4 @@ jobs:
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Authorization: Bearer ${LINE_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 每日選股執行失敗，今日清單可能未產出。詳情：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 選股排程執行失敗（${{ steps.mode.outputs.flag }}）。詳情：https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"

@@ -5,12 +5,11 @@
 合格池內另標記「過」＝三盤過+紅K+量增（進場仍由使用者自行看圖確認）
 
 執行：
-  python daily_screener.py --preview   盤中預估版（排程 12:55）
-  python daily_screener.py --final     收盤正式版（排程 13:55）
-  清單內容一律看網頁；LINE 只在「過」訊號觸發時發簡短提醒（排程失敗另由 workflow 通知）
+  python daily_screener.py --preview   盤中預估版（排程 12:55，LINE 約 13:00 送達）
+  python daily_screener.py --final     收盤正式版（排程 13:55，LINE 約 14:00 送達）
   加 --force   資料非今日也照跑（手動補跑用）
   加 --no-push 只產檔不推播（測試用）
-  加 --rebuild 忽略歷史快取，全量重抓（除錯用；平常每 7 天會自動全量重建）
+  加 --rebuild 忽略歷史快取，全量重抓（每週日排程自動重建；此參數供手動除錯）
 
 產出： daily_list.html / daily_list_preview.html 與對應 CSV（皆在腳本所在資料夾）
 """
@@ -59,8 +58,6 @@ MIN_PRICE = 10.0               # 排除低價股（不想過濾就改成 0）
 EXCLUDE_INDUSTRIES = ("金融", "保險", "生技醫療")
 
 COVERAGE_WARN = 0.98    # 有效資料低於母體 98% 時在 LINE 警告
-
-PAGES_URL = "https://josh59408-ui.github.io/daily-stock-screener/"  # 清單網頁（GitHub Pages）
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -761,23 +758,33 @@ def main():
     print(f"樣板合格 {len(list_a)} 檔")
     print(f"已輸出 {out_html} 與 {out_csv}")
 
-    # --- LINE 訊息：只在「過」訊號觸發時發簡短提醒，清單內容一律看網頁 ---
+    # --- LINE 訊息 ---
+    header = (f"⏳ {ref_date} 盤中快照（{now:%H:%M}）"
+              if preview else f"✅ {ref_date} 收盤正式清單")
+    lines = [header,
+             f"樣板合格 {len(list_a)} 檔，請開清單看圖"]
+
+    # 觸發「三盤過+紅K+量增」的股票直接列在訊息裡（手機點連結開 TradingView 圖）
     sig_rows = list_a[list_a["signal"]]
     if len(sig_rows):
-        page_url = PAGES_URL + ("daily_list_preview.html" if preview else "daily_list.html")
-        tag_txt = f"盤中 {now:%H:%M}，以收盤為準" if preview else "收盤正式"
-        lines = [f"🔸 {ref_date} 三盤過+紅K+量增 觸發 {len(sig_rows)} 檔（{tag_txt}）"]
-        lines += [f"{r.ticker.split('.')[0]} {r.name}" for r in sig_rows.itertuples()]
-        lines.append(page_url)
-        if coverage < COVERAGE_WARN:
-            lines.append(f"⚠ 資料涵蓋率僅 {coverage:.1%}（缺漏/過期偏多），排名可能失真")
-        if args.no_push:
-            print("（--no-push 測試模式，訊息內容如下）")
-            print("\n".join(lines))
-        else:
-            push_line("\n".join(lines))
+        lines.append(f"🔸 三盤過+紅K+量增 觸發 {len(sig_rows)} 檔：")
+        for r in sig_rows.itertuples():
+            code = r.ticker.split(".")[0]
+            lines.append(f"{code} {r.name}  {r.close} ({r.chg_pct:+.1f}%)")
+            lines.append(tv_link(r.ticker))
     else:
-        print("三盤過+紅K+量增：今日無觸發，不發 LINE（清單請看網頁）")
+        lines.append("三盤過+紅K+量增：今日無觸發")
+
+    if preview:
+        lines.append("※ 盤中快照，名單與訊號以收盤為準")
+    if coverage < COVERAGE_WARN:
+        lines.append(f"⚠ 資料涵蓋率僅 {coverage:.1%}（缺漏/過期偏多），排名可能失真")
+
+    if args.no_push:
+        print("（--no-push 測試模式，訊息內容如下）")
+        print("\n".join(lines))
+    else:
+        push_line("\n".join(lines))
 
 if __name__ == "__main__":
     main()
