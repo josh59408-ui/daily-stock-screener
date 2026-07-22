@@ -353,6 +353,17 @@ def tv_symbol(ticker):
     code, suffix = ticker.split(".")
     return ("TWSE:" if suffix == "TW" else "TPEX:") + code
 
+def build_watchlist(list_a):
+    """TradingView 匯入檔：逗號分隔、###開頭為分組標題（匯入後清單內分兩區）"""
+    sig = [tv_symbol(r.ticker) for r in list_a.itertuples() if r.signal]
+    rest = [tv_symbol(r.ticker) for r in list_a.itertuples() if not r.signal]
+    parts = []
+    if sig:
+        parts += ["###過訊號"] + sig
+    if rest:
+        parts += ["###樣板合格池"] + rest
+    return ",".join(parts)
+
 def short_industry(ind):
     """產業別簡寫：塑膠工業→塑膠、觀光事業→觀光、半導體業→半導體"""
     for suf in ("工業", "事業", "業"):
@@ -565,7 +576,9 @@ def build_html(list_a, names, inds, date_label, final=True):
         bias_cls = " warn" if r.bias55 >= BIAS_WARN else ""
         return (
             f"<tr data-code='{code}' data-sym='{tv_symbol(r.ticker)}'>"
-            f"<td><a href='{tv_link(r.ticker)}' target='_blank'>{code} {name}</a>{sig}{tag}</td>"
+            f"<td><a href='{tv_link(r.ticker)}' target='_blank'>{code} {name}</a>"
+            f"<a class='ylink' href='https://tw.stock.yahoo.com/quote/{r.ticker}'"
+            f" target='_blank' title='Yahoo股市（即時報價）'>Y</a>{sig}{tag}</td>"
             f"<td class='num'>{r.close}</td>"
             f"<td class='num {chg_cls}'>{r.chg_pct:+.1f}%</td>"
             f"<td class='num'>{r.rs}</td>"
@@ -575,7 +588,9 @@ def build_html(list_a, names, inds, date_label, final=True):
         )
 
     a_rows = "".join(row_html(r) for r in list_a.itertuples())
-    btn_a = ("<button class='copy' data-target='tb-a'>📋 複製代號</button>"
+    wl_name = "watchlist.txt" if final else "watchlist_preview.txt"
+    btn_a = ((f"<button class='copy' data-target='tb-a'>📋 複製代號</button>"
+              f"<a class='dl' href='{wl_name}' download>⬇ TV 匯入檔</a>")
              if len(list_a) else "")
     today_json = json.dumps(
         [{"c": r.ticker.split(".")[0], "n": names.get(r.ticker, "")}
@@ -606,6 +621,13 @@ def build_html(list_a, names, inds, date_label, final=True):
         margin-left:10px; border-radius:4px; cursor:pointer; letter-spacing:0;
         vertical-align:middle; }}
   button.copy:hover {{ color:var(--acc); border-color:var(--acc); }}
+  a.dl {{ border:1px solid var(--line); color:var(--dim); font-size:.72rem;
+        padding:3px 10px; margin-left:8px; border-radius:4px; letter-spacing:0;
+        vertical-align:middle; border-bottom:1px solid var(--line); }}
+  a.dl:hover {{ color:var(--acc); border-color:var(--acc); }}
+  a.ylink {{ color:var(--dim); border:1px solid var(--line); border-radius:3px;
+        font-size:.68rem; padding:1px 5px; margin-left:8px; vertical-align:middle; }}
+  a.ylink:hover {{ color:var(--acc); border-color:var(--acc); }}
   button.done:hover, button.undo:hover {{ color:var(--txt); border-color:var(--dim); }}
   td.act {{ width:30px; text-align:center; padding:10px 6px; }}
   button.del {{ background:none; border:none; color:var(--dim); cursor:pointer;
@@ -671,6 +693,10 @@ Tokens (classic) → Generate new token，權限只勾 <b>gist</b>。</p>
 「過」＝三盤過+紅K+量增（收盤突破前{SIG_LOOKBACK}盤高點・收紅・量>昨量），觸發股排在最前；
 盤中預估版的訊號以收盤為準。進場時機自行看圖判斷。點股名開啟 TradingView。<br>
 📋 複製代號後，到 TradingView 商品清單面板按 Ctrl+V 即可整批加入清單。<br>
+⬇ TV 匯入檔：下載後在 TradingView（電腦版）商品清單選單點「匯入清單…」選取此檔，
+會建立含「過訊號／樣板合格池」分組的新清單，並自動同步到手機 App；
+重複匯入會多一份清單，記得刪掉舊的。
+每檔股名旁的 <b>Y</b> 連到 Yahoo 股市（手機看即時報價方便）。<br>
 點欄位標題可排序・55MA乖離 ≥ {BIAS_WARN}% 以橘字提示過熱。<br>
 ✕ 汰除的股票之後不再顯示；汰除與消失警示預設存於瀏覽器本機，
 啟用上方「跨裝置同步」後電腦與手機共用同一份名單。</footer>
@@ -769,8 +795,11 @@ def main():
     result.to_csv(out_csv, index=False, encoding="utf-8-sig")
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(build_html(list_a, names, inds, date_label, final=not preview))
+    out_wl = os.path.join(BASE, "watchlist.txt" if not preview else "watchlist_preview.txt")
+    with open(out_wl, "w", encoding="utf-8") as f:
+        f.write(build_watchlist(list_a))
     print(f"樣板合格 {len(list_a)} 檔")
-    print(f"已輸出 {out_html} 與 {out_csv}")
+    print(f"已輸出 {out_html}、{out_csv} 與 {out_wl}")
 
     # --- LINE 訊息：只在「過」訊號觸發時發簡短提醒，清單內容一律看網頁 ---
     sig_rows = list_a[list_a["signal"]]

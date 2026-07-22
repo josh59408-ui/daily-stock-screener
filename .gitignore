@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.html
 *.csv
+watchlist*.txt
 *.log
 history_cache.pkl
 history_cache_meta.json

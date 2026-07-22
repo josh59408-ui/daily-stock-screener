@@ -91,7 +91,7 @@ jobs:
         if: always()
         run: |
           mkdir -p public
-          cp daily_list*.html public/ 2>/dev/null || true
+          cp daily_list*.html watchlist*.txt public/ 2>/dev/null || true
           cat > public/index.html <<'EOF'
           <!doctype html>
           <html lang="zh-Hant">
