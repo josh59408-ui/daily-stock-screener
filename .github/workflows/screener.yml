@@ -1,8 +1,6 @@
 name: 每日股票清單
 
 on:
-  push:
-    branches: [main]   # 臨時：手動觸發今日重跑用，跑完即移除
   schedule:
     # GitHub cron 用 UTC 時間；台灣 = UTC+8
     - cron: "55 4 * * 1-5"   # 台灣 12:55 盤中預估版（實際啟動可能延遲 5-15 分鐘）
