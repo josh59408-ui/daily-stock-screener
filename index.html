@@ -5,13 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>每日股票清單</title>
 <style>
-  body{font-family:system-ui,-apple-system,"Microsoft JhengHei",sans-serif;max-width:480px;margin:40px auto;padding:0 16px}
-  a{display:block;padding:16px;margin:12px 0;border:1px solid #ccc;border-radius:10px;text-decoration:none;font-size:1.1rem;color:#0366d6}
+  :root{--bg:#101418;--panel:#1a2027;--line:#2a323c;--txt:#d7dde3;--dim:#8a94a0;--acc:#f5b93e}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:"Noto Sans TC",system-ui,sans-serif;padding:40px 16px}
+  main{max-width:480px;margin:0 auto}
+  h1{font-size:1.15rem;letter-spacing:.12em;margin:0 0 24px}
+  a.card{display:block;padding:18px 16px;margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--txt);font-size:1.05rem}
+  a.card:hover{border-color:var(--acc);color:var(--acc)}
+  a.card small{display:block;color:var(--dim);font-size:.78rem;margin-top:6px;letter-spacing:.02em}
 </style>
 </head>
-<body>
+<body><main>
 <h1>每日股票清單</h1>
-<a href="daily_list.html">收盤正式版（每交易日約 14:00 更新）</a>
-<a href="daily_list_preview.html">盤中預估版（每交易日約 13:00 更新）</a>
+<a class="card" href="daily_list.html">收盤正式版<small id="t-final">每交易日約 14:00 更新</small></a>
+<a class="card" href="daily_list_preview.html">盤中預估版<small id="t-preview">每交易日約 13:00 更新</small></a>
+</main>
+<script>
+// 以 Pages 回應的 Last-Modified 顯示兩版實際最後更新時間
+[['daily_list.html','t-final','每交易日約 14:00 更新'],
+ ['daily_list_preview.html','t-preview','每交易日約 13:00 更新']].forEach(function(x){
+  fetch(x[0],{method:'HEAD',cache:'no-store'}).then(function(r){
+    var lm=r.headers.get('Last-Modified');
+    if(!lm)return;
+    var d=new Date(lm);
+    document.getElementById(x[1]).textContent=x[2]+'・最後更新 '+
+      d.toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+  }).catch(function(){});
+});
+</script>
 </body>
 </html>
