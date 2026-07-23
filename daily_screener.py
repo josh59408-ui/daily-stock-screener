@@ -378,6 +378,7 @@ def short_industry(ind):
 PAGE_JS = """<script>
 var TODAY = __TODAY__;      // 今日合格池 [{c:代號, n:名稱}, ...]
 var IS_FINAL = __IS_FINAL__;
+var PAGE_DATE = '__PAGE_DATE__';   // 本頁資料日期（ISO，可直接字串比大小）
 var SYNC_FILE = 'daily_screener_sync.json';   // Gist 內的檔名（各裝置以此互認）
 
 function lsGet(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
@@ -394,6 +395,30 @@ var pushTimer = null;
 function applyToday() {
   TODAY.forEach(function (x) { namesMap[x.c] = x.n; });
   if (IS_FINAL) { TODAY.forEach(function (x) { if (!bl.has(x.c)) watch[x.c] = x.n; }); }
+}
+
+// ---------- 今日新增（今日在榜、但先前不在 watch 名單）----------
+var newSet = new Set();
+var newOnly = false;    // 「只看新增」篩選開關
+
+function calcNewCodes() {
+  return TODAY.filter(function (x) { return !(x.c in watch) && !bl.has(x.c); })
+              .map(function (x) { return x.c; });
+}
+// 必須在 applyToday() 把今日名單併入 watch「之前」呼叫。
+// 正式版把結果連同日期凍結到 ds_new，當天重整頁面徽章才不會消失；
+// st 為雲端同步狀態：若雲端已有同日紀錄則直接採用（另一台裝置先開過頁面時較準）。
+function computeNew(st) {
+  if (!IS_FINAL) { newSet = new Set(calcNewCodes()); return; }
+  var stored = lsGet('ds_new', null);
+  var rec;
+  if (st && st.newRec && st.newRec.d === PAGE_DATE) rec = st.newRec;
+  else if (st) rec = { d: PAGE_DATE, codes: calcNewCodes() };   // 以雲端 watch 重算
+  else if (stored && stored.d === PAGE_DATE) rec = stored;
+  else rec = { d: PAGE_DATE, codes: calcNewCodes() };
+  newSet = new Set(rec.codes);
+  // 開到舊日期的頁面時只顯示、不回寫，避免蓋掉今天的紀錄
+  if (!stored || stored.d <= PAGE_DATE) lsSet('ds_new', rec);
 }
 
 function saveLocal() {
@@ -454,7 +479,8 @@ function pushNow() {
   if (!syncToken) return;
   var files = {};
   files[SYNC_FILE] = { content: JSON.stringify(
-    { bl: Array.from(bl), watch: watch, names: namesMap, ts: Date.now() }) };
+    { bl: Array.from(bl), watch: watch, names: namesMap,
+      newRec: lsGet('ds_new', null), ts: Date.now() }) };
   var p = gistId
     ? gh('/gists/' + gistId, { method: 'PATCH', body: JSON.stringify({ files: files }) })
     : gh('/gists', { method: 'POST', body: JSON.stringify(
@@ -470,8 +496,16 @@ function schedulePush() {
 }
 function render() {
   document.querySelectorAll('tr[data-code]').forEach(function (tr) {
-    tr.style.display = bl.has(tr.dataset.code) ? 'none' : '';
+    var c = tr.dataset.code;
+    tr.classList.toggle('is-new', newSet.has(c));
+    tr.style.display = (bl.has(c) || (newOnly && !newSet.has(c))) ? 'none' : '';
   });
+  var nb = document.getElementById('new-only');
+  if (nb) {
+    nb.style.display = newSet.size ? '' : 'none';
+    nb.textContent = (newOnly ? '顯示全部' : '只看新增') + '（' + newSet.size + '）';
+    nb.classList.toggle('on', newOnly);
+  }
   var blArr = Array.from(bl);
   document.getElementById('bl-count').textContent = blArr.length;
   document.getElementById('bl-list').innerHTML = blArr.length
@@ -496,6 +530,7 @@ document.addEventListener('click', function (e) {
   if (b.classList.contains('del')) { bl.add(b.dataset.c); delete watch[b.dataset.c]; persist(); render(); }
   else if (b.classList.contains('undo')) { bl.delete(b.dataset.c); persist(); render(); }
   else if (b.classList.contains('done')) { delete watch[b.dataset.c]; persist(); render(); }
+  else if (b.id === 'new-only') { newOnly = !newOnly; render(); }
 });
 document.querySelectorAll('button.copy').forEach(function (btn) {
   btn.addEventListener('click', async function () {
@@ -547,7 +582,7 @@ document.getElementById('sync-on').addEventListener('click', function () {
   syncToken = t; lsSet('ds_sync_token', t);
   document.getElementById('sync-token').value = '';
   updateSyncState();
-  pullState().then(function () { applyToday(); saveLocal(); render(); schedulePush(); })
+  pullState().then(function (st) { computeNew(st); applyToday(); saveLocal(); render(); schedulePush(); })
     .catch(function (e) { setSync('啟用失敗：' + e.message + '，請確認 token 正確且有 gist 權限'); });
 });
 document.getElementById('sync-off').addEventListener('click', function () {
@@ -557,9 +592,10 @@ document.getElementById('sync-off').addEventListener('click', function () {
 });
 
 // 啟動：先用本機資料立即顯示，有 token 再拉雲端覆蓋後重繪並回寫
-applyToday(); saveLocal(); render(); updateSyncState();
+// computeNew 一定要在 applyToday 之前（今日名單併入 watch 後就分不出誰是新的）
+computeNew(null); applyToday(); saveLocal(); render(); updateSyncState();
 if (syncToken) {
-  pullState().then(function () { applyToday(); saveLocal(); render(); schedulePush(); })
+  pullState().then(function (st) { computeNew(st); applyToday(); saveLocal(); render(); schedulePush(); })
     .catch(function (e) { setSync('同步失敗：' + e.message + '（名單仍存於本機）'); });
 }
 </script>"""
@@ -575,13 +611,14 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
         ind = short_industry(inds.get(r.ticker, ""))
         tag = f"<span class='tag'>{ind}</span>" if ind else ""
         sig = "<span class='sig'>過</span>" if r.signal else ""
+        newtag = "<span class='newtag'>新</span>"   # 是否顯示由前端 JS 判斷
         chg_cls = "pos" if r.chg_pct > 0 else ("neg" if r.chg_pct < 0 else "")
         bias_cls = " warn" if r.bias55 >= BIAS_WARN else ""
         return (
             f"<tr data-code='{code}' data-sym='{tv_symbol(r.ticker)}'>"
             f"<td><a href='{tv_link(r.ticker)}' target='_blank'>{code} {name}</a>"
             f"<a class='ylink' href='https://tw.stock.yahoo.com/quote/{r.ticker}'"
-            f" target='_blank' title='Yahoo股市（即時報價）'>Y</a>{sig}{tag}</td>"
+            f" target='_blank' title='Yahoo股市（即時報價）'>Y</a>{sig}{newtag}{tag}</td>"
             f"<td class='num'>{r.close}</td>"
             f"<td class='num {chg_cls}'>{r.chg_pct:+.1f}%</td>"
             f"<td class='num'>{r.rs}</td>"
@@ -597,7 +634,8 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
         grp_html = f"<span class='grp'>強勢族群：{items}</span>"
     wl_name = "watchlist.txt" if final else "watchlist_preview.txt"
     btn_a = ((f"<button class='copy' data-target='tb-a'>📋 複製代號</button>"
-              f"<a class='dl' href='{wl_name}' download>⬇ TV 匯入檔</a>")
+              f"<a class='dl' href='{wl_name}' download>⬇ TV 匯入檔</a>"
+              f"<button id='new-only' style='display:none'></button>")
              if len(list_a) else "")
     today_json = json.dumps(
         [{"c": r.ticker.split(".")[0], "n": names.get(r.ticker, "")}
@@ -605,14 +643,15 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
         ensure_ascii=False)
     page_js = (PAGE_JS
                .replace("__TODAY__", today_json)
-               .replace("__IS_FINAL__", "true" if final else "false"))
+               .replace("__IS_FINAL__", "true" if final else "false")
+               .replace("__PAGE_DATE__", date_label.split("・")[0]))
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>每日股票清單 {date_label}</title>
 <style>
   :root {{ --bg:#101418; --panel:#1a2027; --line:#2a323c;
-           --txt:#d7dde3; --dim:#8a94a0; --up:#e5484d; --acc:#f5b93e; }}
+           --txt:#d7dde3; --dim:#8a94a0; --up:#e5484d; --acc:#f5b93e; --new:#4cc2ff; }}
   * {{ box-sizing:border-box; }}
   body {{ margin:0; background:var(--bg); color:var(--txt);
           font-family:"Noto Sans TC",system-ui,sans-serif; padding:24px 16px 64px; }}
@@ -672,6 +711,13 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
   .tag {{ color:var(--dim); font-size:.72rem; margin-left:8px; white-space:nowrap; }}
   .sig {{ color:var(--acc); border:1px solid var(--acc); font-size:.7rem;
           padding:1px 5px; margin-left:8px; border-radius:3px; white-space:nowrap; }}
+  .newtag {{ display:none; color:var(--new); border:1px solid var(--new); font-size:.7rem;
+          padding:1px 5px; margin-left:8px; border-radius:3px; white-space:nowrap; }}
+  tr.is-new .newtag {{ display:inline-block; }}
+  #new-only {{ background:none; border:1px solid var(--line); color:var(--dim);
+          font:inherit; font-size:.72rem; padding:3px 10px; margin-left:8px;
+          border-radius:4px; cursor:pointer; letter-spacing:0; vertical-align:middle; }}
+  #new-only:hover, #new-only.on {{ color:var(--new); border-color:var(--new); }}
   td.pos {{ color:var(--up); }}
   td.neg {{ color:#3dd68c; }}
   td.warn {{ color:var(--acc); }}
@@ -703,6 +749,8 @@ Tokens (classic) → Generate new token，權限只勾 <b>gist</b>。</p>
 排除產業：{"、".join(EXCLUDE_INDUSTRIES)}。<br>
 「過」＝三盤過+紅K+量增（收盤突破前{SIG_LOOKBACK}盤高點・收紅・量>昨量），觸發股排在最前；
 盤中預估版的訊號以收盤為準。進場時機自行看圖判斷。點股名開啟 TradingView。<br>
+<b>新</b>＝今日新進榜（先前不曾入榜或已被移除後重新入榜），優先看圖；
+「只看新增」可暫時只顯示這些股票（複製代號也只會複製顯示中的）。<br>
 📋 複製代號後，到 TradingView 商品清單面板按 Ctrl+V 即可整批加入清單。<br>
 ⬇ TV 匯入檔：下載後在 TradingView（電腦版）商品清單選單點「匯入清單…」選取此檔，
 會建立含「過訊號／樣板合格池」分組的新清單，並自動同步到手機 App；
