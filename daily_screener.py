@@ -498,12 +498,23 @@ function schedulePush() {
   pushTimer = setTimeout(pushNow, 1200);   // 連續操作合併成一次上傳
 }
 function render() {
+  var vis = 0;
   document.querySelectorAll('tr[data-code]').forEach(function (tr) {
     var c = tr.dataset.code;
     tr.classList.toggle('is-new', newSet.has(c));
-    tr.style.display = (bl.has(c) || (newOnly && !newSet.has(c)) ||
-                        (indFilter && tr.dataset.ind !== indFilter)) ? 'none' : '';
+    var hide = bl.has(c) || (newOnly && !newSet.has(c)) ||
+               (indFilter && tr.dataset.ind !== indFilter);
+    tr.style.display = hide ? 'none' : '';
+    if (!hide) vis++;
   });
+  var eh = document.getElementById('empty-hint');
+  if (eh) {
+    var showEh = vis === 0 && (indFilter || newOnly);
+    eh.style.display = showEh ? '' : 'none';
+    if (showEh) eh.textContent = indFilter
+      ? '合格池內沒有「' + indFilter + '」族群的股票（強勢族群排名依全市場計算，不限合格池）'
+      : '目前篩選條件下沒有可顯示的股票';
+  }
   document.querySelectorAll('.grp-f').forEach(function (g) {
     g.classList.toggle('on', g.dataset.ind === indFilter);
   });
@@ -560,15 +571,21 @@ document.querySelectorAll('button.copy').forEach(function (btn) {
     setTimeout(function () { btn.textContent = old; }, 1500);
   });
 });
-// 點欄位標題排序：第一次點由大到小，再點反向
+// 點欄位標題排序：▼大到小 → ▲小到大 → 再點恢復預設（過訊號優先→RS）
 document.querySelectorAll('th[data-k]').forEach(function (th) {
   th.addEventListener('click', function () {
     var table = th.closest('table');
     var tbody = table.querySelector('tbody');
     if (!tbody) return;
+    if (!table.defaultOrder) table.defaultOrder = Array.from(tbody.querySelectorAll('tr'));
+    var prev = th.dataset.asc;
+    table.querySelectorAll('th[data-k]').forEach(function (h) { delete h.dataset.asc; });
+    if (prev === '1') {
+      table.defaultOrder.forEach(function (r) { tbody.appendChild(r); });
+      return;
+    }
     var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
-    var asc = th.dataset.asc === '0';
-    table.querySelectorAll('th[data-k]').forEach(function (h) { if (h !== th) delete h.dataset.asc; });
+    var asc = prev === '0';
     th.dataset.asc = asc ? '1' : '0';
     function val(tr) {
       var t = tr.children[idx].textContent.replace(/[,%+]/g, '');
@@ -658,6 +675,8 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
                .replace("__TODAY__", today_json)
                .replace("__IS_FINAL__", "true" if final else "false")
                .replace("__PAGE_DATE__", date_label.split("・")[0]))
+    switch = ("<a class='switch' href='daily_list_preview.html'>⇄ 盤中預估版</a>" if final
+              else "<a class='switch' href='daily_list.html'>⇄ 收盤正式版</a>")
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -723,6 +742,11 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
   th:first-child, td:first-child {{ text-align:left; }}
   th[data-k] {{ cursor:pointer; user-select:none; }}
   th[data-k]:hover {{ color:var(--txt); }}
+  th[data-asc='0']::after {{ content:' ▼'; color:var(--acc); }}
+  th[data-asc='1']::after {{ content:' ▲'; color:var(--acc); }}
+  a.switch {{ margin-left:12px; font-size:.8rem; color:var(--dim); }}
+  .empty {{ color:var(--dim); background:var(--panel); border:1px solid var(--line);
+        border-top:none; padding:14px 16px; font-size:.85rem; }}
   .tag {{ color:var(--dim); font-size:.72rem; margin-left:8px; white-space:nowrap; }}
   .sig {{ color:var(--acc); border:1px solid var(--acc); font-size:.7rem;
           padding:1px 5px; margin-left:8px; border-radius:3px; white-space:nowrap; }}
@@ -753,12 +777,13 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
   }}
 </style></head><body><main>
 <h1>每日股票清單</h1>
-<div class="date">{date_label}</div>
+<div class="date">{date_label}{switch}</div>
 <div id="drop-box" style="display:none"><b>⚠ 已從清單消失</b>──
 以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除：<br>
 <span id="drop-list"></span></div>
 <h2>樣板合格池 <small>五條件全過（{len(list_a)} 檔）</small>{btn_a}{grp_html}</h2>
 <table id='tb-a'>{THEAD}<tbody>{a_rows}</tbody></table>
+<div id='empty-hint' class='empty' style='display:none'></div>
 <details class="bl"><summary>已汰除股票（<span id="bl-count">0</span> 檔）──點開管理／復原</summary>
 <div id="bl-list"></div></details>
 <details class="bl sync"><summary>☁ 跨裝置同步（<span id="sync-state">未啟用</span>）</summary>
@@ -782,7 +807,7 @@ Tokens (classic) → Generate new token，權限只勾 <b>gist</b>。</p>
 會建立含「過訊號／樣板合格池」分組的新清單，並自動同步到手機 App；
 重複匯入會多一份清單，記得刪掉舊的。
 每檔股名旁的 <b>Y</b> 連到 Yahoo 股市（手機看即時報價方便）。<br>
-點欄位標題可排序・55MA乖離 ≥ {BIAS_WARN}% 以橘字提示過熱。<br>
+點欄位標題可排序（▼大到小→▲小到大→再點恢復預設）・55MA乖離 ≥ {BIAS_WARN}% 以橘字提示過熱。<br>
 強勢族群＝全市場（通過流動性過濾、排除產業除外）依產業別平均漲跌%取前
 {GROUP_TOP_N} 名，族群至少 {GROUP_MIN_STOCKS} 檔才列入，避免單一股票暴衝失真。<br>
 ✕ 汰除的股票之後不再顯示；汰除與消失警示預設存於瀏覽器本機，
