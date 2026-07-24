@@ -347,6 +347,41 @@ def analyze(frames, preview=False):
     )
     return result
 
+# ========================= 3.5 大盤狀態（波段環境參考） =========================
+
+MARKET_TICKER = "^TWII"   # 加權指數（僅涵蓋上市，作環境參考；不構成買賣訊號）
+
+def fetch_market_state():
+    """抓加權指數判定三狀態燈號；任何失敗回傳 None（頁面不顯示，不影響選股）。
+    🟢多頭=收盤>55MA且55MA>200MA・🔴空頭=收盤與55MA皆<200MA・其餘🟡修正。
+    200MA 濾網有跨市場實證（Faber 2007 等）；55MA 修正層為實務慣例緩衝帶。"""
+    try:
+        df = yf.download(MARKET_TICKER, start=full_start_date(), interval="1d",
+                         auto_adjust=True, progress=False)
+        close = df["Close"]
+        if isinstance(close, pd.DataFrame):   # 單一 ticker 在部分版本回 MultiIndex 欄位
+            close = close.iloc[:, 0]
+        close = close.dropna()
+        if len(close) < MA_LONG + 1:
+            return None
+        c = float(close.iloc[-1])
+        chg_pct = (c / float(close.iloc[-2]) - 1) * 100
+        ma_s = float(close.rolling(MA_SHORT).mean().iloc[-1])
+        ma_l = float(close.rolling(MA_LONG).mean().iloc[-1])
+        if c > ma_s and ma_s > ma_l:
+            icon, state, desc = "🟢", "多頭", f"收盤>{MA_SHORT}MA>{MA_LONG}MA"
+        elif c < ma_l and ma_s < ma_l:
+            icon, state, desc = "🔴", "空頭", f"收盤與{MA_SHORT}MA皆<{MA_LONG}MA"
+        else:
+            rel = lambda a, b: ">" if a > b else "<"
+            icon, state = "🟡", "修正"
+            desc = f"收盤{rel(c, ma_s)}{MA_SHORT}MA、{rel(c, ma_l)}{MA_LONG}MA"
+        return {"icon": icon, "state": state, "desc": desc,
+                "close": c, "chg_pct": chg_pct, "date": close.index[-1].date()}
+    except Exception as e:
+        print(f"大盤狀態取得失敗（{type(e).__name__}: {e}），頁面不顯示狀態列")
+        return None
+
 # ========================= 4. 產出網頁 =========================
 
 def tv_link(ticker):
@@ -632,7 +667,7 @@ THEAD = ("<thead><tr><th data-k='1'>股票</th><th data-k='1'>收盤</th>"
          "<th data-k='1'>漲跌%</th><th data-k='1'>RS</th>"
          "<th data-k='1'>55MA乖離</th><th></th></tr></thead>")
 
-def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
+def build_html(list_a, names, inds, date_label, final=True, top_groups=None, market=None):
     def row_html(r):
         name = names.get(r.ticker, "")
         code = r.ticker.split(".")[0]
@@ -677,6 +712,14 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
                .replace("__PAGE_DATE__", date_label.split("・")[0]))
     switch = ("<a class='switch' href='daily_list_preview.html'>⇄ 盤中預估版</a>" if final
               else "<a class='switch' href='daily_list.html'>⇄ 收盤正式版</a>")
+    mkt_html = ""
+    if market:
+        m_cls = "pos" if market["chg_pct"] > 0 else ("neg" if market["chg_pct"] < 0 else "")
+        stale = f"・{market['date']:%m/%d} 收盤資料" if market.get("stale") else ""
+        mkt_html = (f"<br>大盤：{market['icon']} <b>{market['state']}</b>・"
+                    f"加權 {market['close']:,.0f} "
+                    f"<span class='{m_cls}'>{market['chg_pct']:+.1f}%</span>"
+                    f"・{market['desc']}{stale}")
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -690,7 +733,10 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
   main {{ max-width:760px; margin:0 auto; }}
   h1 {{ font-size:1.15rem; letter-spacing:.12em; margin:0; }}
   .date {{ color:var(--dim); font-size:.85rem; margin:4px 0 28px;
-           font-variant-numeric:tabular-nums; }}
+           font-variant-numeric:tabular-nums; line-height:1.9; }}
+  .date b {{ color:var(--txt); font-weight:500; }}
+  .date .pos {{ color:var(--up); }}
+  .date .neg {{ color:#3dd68c; }}
   h2 {{ font-size:.9rem; color:var(--acc); letter-spacing:.2em;
         border-left:3px solid var(--acc); padding-left:10px; margin:36px 0 12px;
         display:flex; align-items:center; flex-wrap:wrap; gap:4px 0; }}
@@ -777,7 +823,7 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None):
   }}
 </style></head><body><main>
 <h1>每日股票清單</h1>
-<div class="date">{date_label}{switch}</div>
+<div class="date">{date_label}{switch}{mkt_html}</div>
 <div id="drop-box" style="display:none"><b>⚠ 已從清單消失</b>──
 以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除：<br>
 <span id="drop-list"></span></div>
@@ -811,7 +857,10 @@ Tokens (classic) → Generate new token，權限只勾 <b>gist</b>。</p>
 強勢族群＝全市場（通過流動性過濾、排除產業除外）依產業別平均漲跌%取前
 {GROUP_TOP_N} 名，族群至少 {GROUP_MIN_STOCKS} 檔才列入，避免單一股票暴衝失真。<br>
 ✕ 汰除的股票之後不再顯示；汰除與消失警示預設存於瀏覽器本機，
-啟用上方「跨裝置同步」後電腦與手機共用同一份名單。</footer>
+啟用上方「跨裝置同步」後電腦與手機共用同一份名單。<br>
+大盤狀態（波段環境參考，不構成買賣訊號）：🟢多頭＝收盤>{MA_SHORT}MA且{MA_SHORT}MA>{MA_LONG}MA・
+🔴空頭＝收盤與{MA_SHORT}MA皆<{MA_LONG}MA・其餘🟡修正（多頭架構動搖，突破失敗率升高）。
+加權指數僅涵蓋上市。長期投資部位不適用此燈號。</footer>
 </main>{page_js}</body></html>"""
 
 # ========================= 5. LINE 推播 =========================
@@ -902,6 +951,11 @@ def main():
     top_groups = [(short_industry(str(i)), row["chg"], int(row["n"]))
                   for i, row in grp.iterrows()]
 
+    market = fetch_market_state()
+    if market:
+        market["stale"] = market["date"] != ref_date   # 指數與個股資料日不同時在頁面註明
+        print(f"大盤狀態：{market['state']}（{market['desc']}，{market['date']}）")
+
     tag = "preview" if preview else "final"
     out_html = os.path.join(BASE, f"daily_list_preview.html" if preview else "daily_list.html")
     out_csv = os.path.join(BASE, f"screener_result_{tag}.csv")
@@ -914,7 +968,7 @@ def main():
     result.to_csv(out_csv, index=False, encoding="utf-8-sig")
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(build_html(list_a, names, inds, date_label,
-                           final=not preview, top_groups=top_groups))
+                           final=not preview, top_groups=top_groups, market=market))
     out_wl = os.path.join(BASE, "watchlist.txt" if not preview else "watchlist_preview.txt")
     with open(out_wl, "w", encoding="utf-8") as f:
         f.write(build_watchlist(list_a))
