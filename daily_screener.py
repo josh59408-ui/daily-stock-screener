@@ -571,6 +571,7 @@ function render() {
     var todaySet = new Set(TODAY.map(function (x) { return x.c; }));
     var dropped = Object.keys(watch).filter(function (c) { return !todaySet.has(c) && !bl.has(c); });
     document.getElementById('drop-box').style.display = dropped.length ? '' : 'none';
+    document.getElementById('drop-count').textContent = dropped.length;
     document.getElementById('drop-list').innerHTML = dropped.map(function (c) {
       return "<span class='drop-item'>" + c + " " + (namesMap[c] || watch[c] || '') +
              " <button class='done' data-c='" + c + "'>已從TV移除 ✓</button></span>";
@@ -653,6 +654,11 @@ document.getElementById('sync-off').addEventListener('click', function () {
   lsSet('ds_sync_token', ''); lsSet('ds_gist_id', '');
   updateSyncState(); setSync('已停用，名單僅存於本機');
 });
+
+// 消失警示區塊可收合，收合狀態記在本機（清單還沒空整理時先關起來）
+var dropBox = document.getElementById('drop-box');
+dropBox.open = !lsGet('ds_dropClosed', 0);   // lsGet 用 ||，false 存不住，反向記「已收合」
+dropBox.addEventListener('toggle', function () { lsSet('ds_dropClosed', dropBox.open ? 0 : 1); });
 
 // 啟動：先用本機資料立即顯示，有 token 再拉雲端覆蓋後重繪並回寫
 // computeNew 一定要在 applyToday 之前（今日名單併入 watch 後就分不出誰是新的）
@@ -768,6 +774,8 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None, mar
         color:var(--up); padding:14px 16px; margin:0 0 20px; font-size:.88rem;
         border-radius:6px; line-height:2.1; }}
   #drop-box b {{ letter-spacing:.1em; }}
+  #drop-box summary {{ cursor:pointer; user-select:none; }}
+  #drop-box summary:hover {{ filter:brightness(1.25); }}
   #drop-box button {{ border-color:rgba(229,72,77,.5); color:var(--up); }}
   .drop-item, .bl-item {{ display:inline-block; margin:2px 14px 2px 0; white-space:nowrap; }}
   details.bl {{ margin-top:28px; color:var(--dim); font-size:.85rem; line-height:2.1; }}
@@ -824,9 +832,9 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None, mar
 </style></head><body><main>
 <h1>每日股票清單</h1>
 <div class="date">{date_label}{switch}{mkt_html}</div>
-<div id="drop-box" style="display:none"><b>⚠ 已從清單消失</b>──
-以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除：<br>
-<span id="drop-list"></span></div>
+<details id="drop-box" style="display:none"><summary><b>⚠ 已從清單消失</b>（<span id="drop-count">0</span> 檔）──
+以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除</summary>
+<span id="drop-list"></span></details>
 <h2>樣板合格池 <small>五條件全過（{len(list_a)} 檔）</small>{btn_a}{grp_html}</h2>
 <table id='tb-a'>{THEAD}<tbody>{a_rows}</tbody></table>
 <div id='empty-hint' class='empty' style='display:none'></div>
