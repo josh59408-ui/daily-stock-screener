@@ -831,7 +831,7 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None, mar
   }}
 </style></head><body><main>
 <h1>每日股票清單</h1>
-<div class="date">{date_label}{switch}{mkt_html}</div>
+<div class="date">{date_label}{switch}<a class='switch' href='https://claude.ai/code/artifact/b69b22ee-f4a9-4077-95c1-640f8236d621'>產業儀表板 ↗</a>{mkt_html}</div>
 <details id="drop-box" style="display:none"><summary><b>⚠ 已從清單消失</b>（<span id="drop-count">0</span> 檔）──
 以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除</summary>
 <span id="drop-list"></span></details>
