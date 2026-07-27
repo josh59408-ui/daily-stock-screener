@@ -98,7 +98,7 @@ jobs:
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>每日股票清單</title>
           <style>
-            :root{--bg:#101418;--panel:#1a2027;--line:#2a323c;--txt:#d7dde3;--dim:#8a94a0;--acc:#f5b93e}
+            :root{--bg:#0e1318;--panel:#141b22;--line:#2a3641;--txt:#eef0f2;--dim:#8b98a3;--acc:#e0a058}
             body{margin:0;background:var(--bg);color:var(--txt);font-family:"Noto Sans TC",system-ui,sans-serif;padding:40px 16px}
             main{max-width:480px;margin:0 auto}
             h1{font-size:1.15rem;letter-spacing:.12em;margin:0 0 24px}
@@ -111,6 +111,7 @@ jobs:
           <h1>每日股票清單</h1>
           <a class="card" href="daily_list.html">收盤正式版<small id="t-final">每交易日約 14:00 更新</small></a>
           <a class="card" href="daily_list_preview.html">盤中預估版<small id="t-preview">每交易日約 13:00 更新</small></a>
+          <a class="card" href="https://claude.ai/code/artifact/b69b22ee-f4a9-4077-95c1-640f8236d621">產業資訊儀表板<small>價值投資 · 產業情報，每週一/四/五自動更新</small></a>
           </main>
           <script>
           // 以 Pages 回應的 Last-Modified 顯示兩版實際最後更新時間
