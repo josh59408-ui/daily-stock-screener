@@ -983,6 +983,14 @@ def main():
     print(f"樣板合格 {len(list_a)} 檔")
     print(f"已輸出 {out_html}、{out_csv} 與 {out_wl}")
 
+    # --- 持倉追蹤（獨立模組；任何失敗都不影響主清單與推播） ---
+    if not preview:
+        try:
+            import portfolio_page
+            portfolio_page.generate(ref_date, list_a["ticker"].tolist(), fresh, names)
+        except Exception as e:
+            print(f"持倉追蹤頁產生失敗（不影響主清單）：{type(e).__name__}: {e}")
+
     # --- LINE 訊息：只在「過」訊號觸發時發簡短提醒，清單內容一律看網頁 ---
     sig_rows = list_a[list_a["signal"]]
     if len(sig_rows):
