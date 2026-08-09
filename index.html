@@ -21,15 +21,15 @@
 <a class="card" href="https://claude.ai/code/artifact/b69b22ee-f4a9-4077-95c1-640f8236d621">產業資訊儀表板<small>價值投資 · 產業情報，每週一/四/五自動更新</small></a>
 </main>
 <script>
-// 以 Pages 回應的 Last-Modified 顯示兩版實際最後更新時間
+// 顯示各頁「真實資料日」：解析頁面標題內的日期（Last-Modified 是整站部署
+// 時間，收盤版部署會連帶蓋掉盤中版的時間戳，會誤導）
 [['daily_list.html','t-final','每交易日約 14:00 更新'],
  ['daily_list_preview.html','t-preview','每交易日約 13:00 更新']].forEach(function(x){
-  fetch(x[0],{method:'HEAD',cache:'no-store'}).then(function(r){
-    var lm=r.headers.get('Last-Modified');
-    if(!lm)return;
-    var d=new Date(lm);
-    document.getElementById(x[1]).textContent=x[2]+'・最後更新 '+
-      d.toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+  fetch(x[0],{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+    var m=t.match(/<title>每日股票清單 (\d{4}-\d\d-\d\d)・(盤中 (\d\d:\d\d))?/);
+    if(!m)return;
+    document.getElementById(x[1]).textContent=x[2]+'・最新資料 '+
+      m[1].slice(5).replace('-','/')+(m[3]?'（盤中 '+m[3]+' 快照）':'（收盤）');
   }).catch(function(){});
 });
 </script>
