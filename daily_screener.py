@@ -655,6 +655,21 @@ document.getElementById('sync-off').addEventListener('click', function () {
   updateSyncState(); setSync('已停用，名單僅存於本機');
 });
 
+// 資料日提醒：平日開頁時若本頁資料日不是今天（例如早上看的仍是前一日清單），
+// 明顯提示避免誤把昨日漲跌%當成今日。週末看到週五資料屬正常，不提示。
+(function () {
+  var n = new Date();
+  function p2(x) { return (x < 10 ? '0' : '') + x; }
+  var today = n.getFullYear() + '-' + p2(n.getMonth() + 1) + '-' + p2(n.getDate());
+  var dow = n.getDay();
+  if (PAGE_DATE >= today || dow === 0 || dow === 6) return;
+  var el = document.getElementById('stale-note');
+  if (!el) return;
+  el.textContent = '⚠ 本頁仍是 ' + PAGE_DATE + ' 的清單，收盤價與漲跌%皆為該日數值。' +
+    '今日為交易日的話，盤中預估版約 13:00、收盤正式版約 14:00 更新；休市日不更新。';
+  el.style.display = '';
+})();
+
 // 消失警示區塊可收合，收合狀態記在本機（清單還沒空整理時先關起來）
 var dropBox = document.getElementById('drop-box');
 dropBox.open = !lsGet('ds_dropClosed', 0);   // lsGet 用 ||，false 存不住，反向記「已收合」
@@ -770,6 +785,9 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None, mar
         font-size:.85rem; opacity:.45; }}
   tr:hover button.del {{ opacity:1; }}
   button.del:hover {{ color:var(--up); }}
+  #stale-note {{ border:1px solid var(--acc); background:rgba(245,185,62,.08);
+        color:var(--acc); padding:12px 16px; margin:0 0 20px; font-size:.85rem;
+        border-radius:6px; line-height:1.8; }}
   #drop-box {{ border:1px solid var(--up); background:rgba(229,72,77,.08);
         color:var(--up); padding:14px 16px; margin:0 0 20px; font-size:.88rem;
         border-radius:6px; line-height:2.1; }}
@@ -832,6 +850,7 @@ def build_html(list_a, names, inds, date_label, final=True, top_groups=None, mar
 </style></head><body><main>
 <h1>每日股票清單</h1>
 <div class="date">{date_label}{switch}<a class='switch' href='https://claude.ai/code/artifact/b69b22ee-f4a9-4077-95c1-640f8236d621'>產業儀表板 ↗</a>{mkt_html}</div>
+<div id="stale-note" style="display:none"></div>
 <details id="drop-box" style="display:none"><summary><b>⚠ 已從清單消失</b>（<span id="drop-count">0</span> 檔）──
 以下股票先前曾入榜、今日已不符合資格，記得從 TradingView 清單移除</summary>
 <span id="drop-list"></span></details>

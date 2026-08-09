@@ -6,3 +6,4 @@ watchlist*.txt
 *.log
 history_cache.pkl
 history_cache_meta.json
+list_archive.json
